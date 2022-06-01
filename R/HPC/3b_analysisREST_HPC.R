@@ -148,14 +148,19 @@ inits<-function(){
   list(lambda=1/8, D=0.05)
 }
 parameters<-c("lambda","D","N","r") # "mu"
-  
+
 "-------- Prep for parallel processing --------"
-ncores = detectCores() - 3
-cl<-makeCluster(ncores)
+slurm_ncores <- as.integer(Sys.getenv("SLURM_CPUS_PER_TASK"))
+if (is.numeric(slurm_ncores)) {
+  cores <- as.integer(Sys.getenv("SLURM_JOB_CPUS_PER_NODE"))
+} else {
+  cores = detectCores()
+}
+cl<-makeCluster(cores)
+
 clusterSetRNGStream(cl = cl) # set up random number stream 
 registerDoParallel(cl) # register as backend for 'foreach'
-  
-  
+
 "-------- Execute REST --------"
 system.time(
   res <- foreach(x = 1:cores, .packages="nimble",.errorhandling='remove', .inorder=FALSE) %do% {
@@ -208,7 +213,7 @@ r.Rhat = unlist(summMCMC['r','Rhat'])
 stayLim = stayLim
 
 rest_output <- data.frame(Replicate, Scenario, Behaviour, groupSize, Model, Trap.effort, Days.monitored,
-                          Nhat, Nhat.sd, Nhat.lo, Nhat.hi, Nhat.Rhat, lambda, lambda.Rhat, r, r.Rhat, stayLim)
+                        Nhat, Nhat.sd, Nhat.lo, Nhat.hi, Nhat.Rhat, lambda, lambda.Rhat, r, r.Rhat, stayLim)
 
 # append to existing master file
 write.table( rest_output,  

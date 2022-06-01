@@ -1,13 +1,14 @@
 # ====================================
 # Unmarked abundance evalaution
-# Movement simulations (simple movement)
+# Movement simulations (solitary movement)
 # ====================================
 
 library(CircStats)
 # source("R/0_functions.R")
 
 '------ Run via shell script ------'
-# get the input passed from the shell script (arg[1] for sceenario, arg[2] for iter)
+# get the input passed from the shell script (arg[1] for scenario, arg[2] for iter)
+# e.g., `Rscript --vanilla ./R/1a_MoveSims_simple.R small 1`
 args <- commandArgs(trailingOnly = TRUE)
 str(args)
 cat(args, sep = "\n")
@@ -22,25 +23,23 @@ if (length(args) <= 1) {
 }
 
 if (scenario == 'small'){
-  scl <- 1; shp <- 1.6; trty <- 0.4; alpha <- 4 # AC strength
-  minDist = 1 # min dist between ACs
+  scl <- 1.2; shp <- 2.1; trty <- 0.4; alpha <- 4.1 # AC strength
+  minDist = 0 # min dist between ACs
   borderBuff = 5 # min dist between ACs and landscape border
-  N = 1000
+  N = 2000
   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max.  
-  # 1.24   63.97   87.44   95.29  118.05  576.30  (steplength m/h)
-  # 0.03109 0.06542 0.07954 0.08450 0.09647 0.22202 (MCP km^2; 50 days)
-  # 0.05893 0.09450 0.10919 0.11385 0.12886 0.25433 (MCP km^2; 100 days)
+  # 8.79  212.72  279.27  298.34  363.18 1856.11 (steplength m/h)
+  # 0.03492 0.06850 0.08053 0.08318 0.09543 0.20110 (MCP km^2; 50 days)
 }
 
 if (scenario == 'medium'){
   scl <- 1.7; shp <- 3.2; trty <- 0.4; alpha <- 1.2 # AC strength
   minDist = 5 # min dist between ACs
-  borderBuff = 25 # min dist between ACs and landscape border
+  borderBuff = 20 # min dist between ACs and landscape border
   N = 200
   #   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-  #  29.57  250.29  312.60  326.31  387.12 1226.07 (steplength m/h)
-  #  0.6338  0.7894  0.8339  0.9869  1.0412  1.8954 (MCP km^2; 50 days)
-  #  0.9904  1.1548  1.3368  1.3281  1.4972  1.6534 (MCP km^2; 100 days)
+  #  65.86  499.28  622.16  650.22  770.74 2517.14 (steplength m/h)
+  #  0.4813  0.8027  0.9364  0.9824  1.1191  1.7673  (MCP km^2; 50 days)
 }
 
 if (scenario == 'large'){
@@ -49,16 +48,15 @@ if (scenario == 'large'){
   borderBuff = 100 # min dist between ACs and landscape border
   N = 10
   #   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
-  #   300.8   728.2   870.5   895.0  1033.6  2576.4 (steplength m/h)
+  #   300.8   728.2   870.5   895.0  1033.6  2576.4 (steplength m/h) [x2, timestep now 5min]
   #   6.975   7.864  10.058   9.507  10.785  11.792 (MCP km^2; 50 days)
   #   9.157   9.931  11.399  11.303  12.831  13.112 (MCP km^2; 100 days)
 }
 
 "-------- Prep sim parameters --------"
 # set general parameters
-# nsim = 10
 days = 100
-nbObs <- 6*12*days # 15-min timesteps, 12-h activity, 50 days
+nbObs <- 12*12*days # 5-min timesteps, 12-h activity, 50 days
 xlim <- ylim <- c(0,1000) # landscape bounds
 
 "-------- Simulation functions --------"
@@ -84,7 +82,7 @@ genAC <- function(N = 100, minDist = 10, borderBuff = 0, xlim = c(0,1000), ylim 
 }
 
 # simulation
-simMove <- function(nbObs = nbObs, xy0 = c(0,0), ACstrength = 1){
+simMove <- function(nbObs = nbObs, xy0 = c(0,0), ACstrength = 1, torus = T){
   xy <- matrix(NA, nrow = nbObs, ncol = 2) # empty matrix for simulated locs
   xy <- data.frame(xy)
   names(xy) <- c("x", "y")
@@ -97,8 +95,6 @@ simMove <- function(nbObs = nbObs, xy0 = c(0,0), ACstrength = 1){
       ta <- runif(20, -pi, pi)
     } else { # for subsequent locations
       # cand locations
-      #scl <- 1.4
-      #shp <- 3.2
       ta <- rwrpnorm(20, ta[z], trty) # angle correlated to previous angle 
       slen <- 0.5*(slen[z] + rgamma(20, scale = scl, shape = shp)) # speed correlated to previous speed 
     }
@@ -107,55 +103,69 @@ simMove <- function(nbObs = nbObs, xy0 = c(0,0), ACstrength = 1){
     y1 <- xy[i - 1, 2] + (sin(ta) * slen)
     
     # bias towards AC
-    d1 <- vector() # distance to current AC, accounting for torus
-    for (a in 1:20){ 
-      d1[a] <- sqrt( min( abs(x1[a] - x0), 1000 - abs( x1[a] - x0 ))^2  +  min( abs(y1[a] - y0), 1000 - abs( y1[a] - y0 ))^2 )
-    }
+    d1<- sqrt( (x1 - x0 )^2  +   (y1 - y0)^2 )
+    
     w <- dexp(d1, rate = 1/25) 
     w[is.na(w)] <- 0
     w <- w^ACstrength * (10^(ACstrength-1)) # increase attraction to centre
     z <- sample(20, 1, prob = w)
     
-    # landscape torus
-    withinLandscape = isTRUE(x1[z] >= 0 & x1[z] <= 1000 & y1[z] >= 0 & y1[z] <= 1000)
-    if (withinLandscape==FALSE){
-      if(x1[z] <= 0){
-        x1[z] <- 1000 + x1[z]
-      }
-      if(x1[z] >= 1000){
-        x1[z] <- x1[z] - 1000 
-      }
-      if(y1[z] <= 0){
-        y1[z] <- 1000 + y1[z]
-      }
-      if(y1[z] >= 1000){
-        y1[z] <- y1[z] - 1000 
-      }
-    }
     # fill output
     xy[i, ] <- c(x1[z], y1[z])
   } # i 
   xy <- xy[1:nbObs,]
   xy$ID <- id
   xy$time <- 1:nrow(xy)
+  
+  # landscape torus
+  if (torus == T){
+    for (j in 1:nrow(xy)){
+      if(xy$x[j] <= xlim[1]){
+        xy$x[j] <- xlim[2] + xy$x[j]
+      }
+      if(xy$x[j] >= xlim[2]){
+        xy$x[j] <- xy$x[j] - xlim[2]
+      }
+      if(xy$y[j] <= ylim[1]){
+        xy$y[j] <- ylim[2] + xy$y[j]
+      }
+      if(xy$y[j] >= ylim[2]){
+        xy$y[j] <- xy$y[j] - ylim[2] 
+      }
+    }
+  }
   return(xy)
 }
 
 "-------- Run movement simulations --------"
 # ACs <- cbind(x = runif(N, 0, 1000), y = runif(N, 0, 1000))
-ACs <- genAC(N = N, minDist = minDist, borderBuff = 100, xlim = xlim, ylim = ylim)
-#points(ACs,pch=3)
-
-# run once (test)
-#xy <- simMove(xy0 = c(500,500), ACstrength = 4)
+ACs <- genAC(N = N, minDist = minDist, borderBuff = borderBuff, xlim = xlim, ylim = ylim)
 
 # run many
 simDat <- list()
 for (id in 1:N){
-  simDat[[id]] <- simMove(nbObs = nbObs, xy0 = as.numeric(ACs[id,]), ACstrength = alpha)
+  simDat[[id]] <- simMove(nbObs = nbObs, xy0 = as.numeric(ACs[id,]), ACstrength = alpha, torus=T)
   print(paste('Animal',id,'done'))
 }
 
-# save
+# compile into dataframe
 moveSims <- do.call(rbind, simDat)
-write.csv(moveSims,row.names=FALSE,file=paste('Data/MovementSims/simDat_', scenario, '_', iter, '.csv', sep=''))
+
+# save
+write.csv(moveSims,row.names=FALSE,file=paste('Data/MovementSims/simDat_', scenario, '_sol_', iter, '.csv', sep=''))
+
+"-------- Update progress bar --------"
+# count files for each scenario for solitary
+sm <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_small_sol | wc -l", intern = T))
+md <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_medium_sol | wc -l", intern = T))
+lg <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_large_sol | wc -l", intern = T))
+
+nsims <- 100
+data <- rbind(c(sm,md,lg), 
+              nsims-c(sm,md,lg))
+colnames(data) <- c("sm","md","lg")
+
+png("Data/MovementSims/SolMovementProgress.png", type="cairo")
+plotx<- barplot(data, horiz = TRUE, names.arg = c("sm","md","lg"), main = "MovementSims (sol)")
+text(x = c(sm,md,lg)+5, y = plotx, label = data[1,], pos = 1, cex = 0.8, col = "red")
+dev.off()

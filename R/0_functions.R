@@ -3,44 +3,6 @@
 # Functions
 # ====================================
 
-#### CREATE STUDY AREA COVARIATE (code from B. McClintock) ####
-genAreaRaster <- function(ncols,nrows,xlim=c(0,500),ylim=c(0,500)){
-  potSurface <- raster(ncol=(nrows+2)*2,nrow=(ncols+2)*2,xmn=xlim[1]-150,xmx=xlim[2]+150,ymn=ylim[1]-150,ymx=ylim[2]+150, vals=rep(0,(nrows+2)*2*(ncols+2)*2))
-  potSurface<-setValues(potSurface,values=1-c(rep(rep(0,(ncols+2)*2),(nrows+2)/2+1),rep(c(rep(0,(ncols+2)/2+1),rep(1,ncols),rep(0,(ncols+2)/2+1)),nrows),rep(rep(0,(ncols+2)*2),(nrows+2)/2+1)))
-  potSurface[potSurface>0] <- NA
-  potSurface <- raster::distance(potSurface)
-  crs(potSurface) <-"+proj=utm +zone=53H +south +datum=WGS84"
-  tmp <- potSurface / mean(raster::values(raster::terrain(potSurface, opt = "slope")), na.rm = T) #standardize based on slope of gradient
-  potSurfaceRast <- ctmcmove::rast.grad(tmp)[c("rast.grad.x","rast.grad.y")]
-  #potSurfaceRast <- lapply(potSurfaceRast,function(x) spatial.tools::modify_raster_margins(x,extent_delta = c(-1,-1,-1,-1))) # remove outer cells with NA gradient
-  mySurface <- list("potSurfaceRast"=potSurfaceRast,"potSurface"=potSurface)
-  
-  return(mySurface)
-}
-
-#### CREATE SEPARATE RASTER FOR EACH SNAKES ACTIVITY CENTER
-rastActivity <- function(centers,bait){
-  centerStack <- centerStack.x <- centerStack.y <- stack()
-  bait <- setValues(bait,NA)
-  for(j in 1:nrow(centers)){
-    k2 <- bait
-    k2[cellFromXY(k2,centers[j,])] <- 1
-    k2 <- raster::distance(k2)
-    crs(k2) <-"+proj=utm +zone=55 +ellps=WGS84 +towgs84=0,0,0,-0,-0,-0,0 +units=m +no_defs"
-    centerStack <- stack(centerStack,k2)
-    k2 <- k2 / mean(raster::values(terrain(k2, opt = "slope")), na.rm = T) #standardize based on slope of gradient
-    centerGrad <- rast.grad(k2)[c("rast.grad.x","rast.grad.y")]
-    centerStack.x <- stack(centerStack.x, centerGrad$rast.grad.x) ## This gets warnings about ncolumns (though same number) but the rasters seem to stack correctly
-    centerStack.y <- stack(centerStack.y, centerGrad$rast.grad.y) ## This gets warnings about ncolumns (though same number) but the rasters seem to stack correctly
-    rm(centerGrad)
-  }
-  names(centerStack) <- names(centerStack.x) <- names(centerStack.y) <- as.character(1:nrow(centers))
-  #plot(centerStack)
-  mycenter <- list("centerStack.x"=centerStack.x,"centerStack.y"=centerStack.y)
-  
-  return(mycenter)
-}
-
 "MOVEMENT SIMULATIONS"
 # Generate activity centres (ACs)
 generateAC <- function(N = 5, xlim = c(0,500), ylim = c(0,500), buffer = 50){
@@ -58,39 +20,24 @@ generateAC <- function(N = 5, xlim = c(0,500), ylim = c(0,500), buffer = 50){
   
 }
 
-generateAChab <- function(N = 5, xlim = c(0,500), ylim = c(0,500), buffer = 50){
-  ACs <- matrix(NA, N, 2)
-  repeat{
-    cellID <- sample(which.max(hab==2), 1, replace = F)
-    ACcand <- xyFromCell(hab, cellID)
-    
-    if( (ACcand[1,1] >= xlim[1] & ACcand[1,1] <= xlim[2] &
-         ACcand[1,2] >= ylim[1] & ACcand[1,2] <= ylim[2])  == TRUE ){
-      ACs[1,] <- ACcand[1,]
-      break }
-  }
-  
-  for (i in 2:N)
-  {  repeat{
-    cellID <- sample(which.max(hab==2), 1, replace = F)
-    ACcand <- xyFromCell(hab, cellID)
-    distapart <- apply(ACs, 1, function(x) sqrt( (x[1] - ACcand[1])^2 + (x[2] - ACcand[2])^2) )
-    
-    if( (ACcand[1,1] >= xlim[1] & ACcand[1,1] <= xlim[2] &
-         ACcand[1,2] >= ylim[1] & ACcand[1,2] <= ylim[2] & 
-         all(distapart > buffer, na.rm = T))  == TRUE ){
-      ACs[i,] <- ACcand[1,]
-      break }
-  }}
-  return(ACs)
-}
-# Create raster for each AC (code adapted from Staci Amburgey)
-
-
 "DETECTION SIMULATIONS"
-# new function that makes randomly facing triangular detectors from cam locs
+# computes the polygon coordinates of a circle sector (credit: R package 'pgirmess')
+polycirc2<-function (radius=1, center = c(0, 0), edges = 50, init=pi/2, angle=pi/2) 
+{
+  circ = NULL
+  angles <- seq(init, init+angle, l = edges)
+  for (i in angles) {
+    circ <- rbind(circ, cbind(radius * sin(i), radius * cos(i)))
+  }
+  circ<-rbind(c(0,0),circ)
+  x<-cbind(circ[, 1] + center[1], circ[,2] + center[2])
+  x<-rbind(x,x[1,])
+  return(x) 
+  
+}
+# makes randomly facing circlular sectors (representing detection zone) from cam locs
 makeTraps <- function(xlim = c(50,450), ylim = c(50,450), trapspacing = 50, 
-                      r = 10, w = 10/2, jitter=F) { # detection radius r and width w
+                      r = 10, theta = pi/3, jitter=F) { # detection radius r and width w
   
   grid <- expand.grid(x=seq(xlim[1],xlim[2],trapspacing),y=seq(ylim[1],ylim[2],trapspacing))
   if(jitter==T){
@@ -98,79 +45,27 @@ makeTraps <- function(xlim = c(50,450), ylim = c(50,450), trapspacing = 50,
     grid[, 2] <- grid[, 2] + runif(nrow(grid), -5, 5)
   }
   
-  grid$turnAng <- runif(nrow(grid), -pi, pi) # pick random orientations for each trap
+  grid$initDir <- runif(nrow(grid), 0, 2*pi) # pick random orientations for each trap
   
-  camPolys <- apply(grid, 1, function(x) Polygon( cbind(c(x[1], # cam x coord
-                                                          x[1]+cos(x[3]+tanh(w/r))*sqrt(w^2+r^2), # add detection angle (calculated from w and r) to cam direction
-                                                          x[1]+cos(x[3]-tanh(w/r))*sqrt(w^2+r^2)), # minus detection angle from cam direction
-                                                        c(x[2], # cam y coord
-                                                          x[2]+sin(x[3]+tanh(w/r))*sqrt(w^2+r^2),
-                                                          x[2]+sin(x[3]-tanh(w/r))*sqrt(w^2+r^2)) )) )
+  #polycirc2(radius=r, center=x[1:2], init=x[3],angle=theta)
+  camPolys <- apply(grid, 1, function(x) Polygon( polycirc2(radius=r, center=x[1:2], init=x[3],angle=theta)) )
   camStore <- list()
   for (i in 1:length(camPolys)){
     camStore[[i]] <- Polygons(list(camPolys[[i]]), paste(i))
   }
   camPolys.sp <- SpatialPolygons(camStore)
   
-  return(camPolys.sp)
+  return(list(trapPoly = camPolys.sp, trapInfo = grid))
 }
 
-makeTrapsCluster <- function(xlim = c(75,425), ylim = c(75,425), clusterspacing = 70, trapspacing = 15, 
-                             n = 9, nClus = 4, r = 1, w = 1/2) { # no. of trap clusters n, detection radius r and width w
-  
-  if( !nClus %in% c(2,3,4)){
-    stop('Error: nClus must be 2, 3 or 4')
-  }
-  
-  if(nClus == 2){
-    powa <- 1
-  }
-  
-  if(nClus == 3){
-    powa <- 0
-  }
-  
-  if(nClus == 4){
-    powa <- -1
-  }
-  
-  grid <- expand.grid(x=seq(xlim[1],xlim[2],clusterspacing),y=seq(ylim[1],ylim[2],clusterspacing))
-  grid <- grid[sample(1:nrow(grid), n),]
-  traps <- apply(grid, 1, function(x) expand.grid(x=seq(x[1]-trapspacing/(2^powa),x[1]+trapspacing/(2^powa),trapspacing),y=seq(x[2]-trapspacing/(2^powa),x[2]+trapspacing/(2^powa),trapspacing)) )
-  traps <- do.call(rbind,traps)
-  
-  traps$turnAng <- runif(nrow(traps), -pi, pi) # pick random orientations for each trap
-  
-  camPolys <- apply(traps, 1, function(x) Polygon( cbind(c(x[1], # cam x coord
-                                                          x[1]+cos(x[3]+tanh(w/r))*sqrt(w^2+r^2), # add detection angle (calculated from w and r) to cam direction
-                                                          x[1]+cos(x[3]-tanh(w/r))*sqrt(w^2+r^2)), # minus detection angle from cam direction
-                                                        c(x[2], # cam y coord
-                                                          x[2]+sin(x[3]+tanh(w/r))*sqrt(w^2+r^2),
-                                                          x[2]+sin(x[3]-tanh(w/r))*sqrt(w^2+r^2)) )) )
-  camStore <- list()
-  for (i in 1:length(camPolys)){
-    camStore[[i]] <- Polygons(list(camPolys[[i]]), paste(i))
-  }
-  camPolys.sp <- SpatialPolygons(camStore)
-  
-  return(camPolys.sp)
-}
-
-# old function that makes circular detectors
-makeTrapsCirc <- function(xlim = c(60,440), ylim = c(60,440), trapspacing = 20, bufferdist = 0.2) { # 10m if 1 unit = 50m
-  grid <- expand.grid(x=seq(xlim[1],xlim[2],trapspacing),y=seq(ylim[1],ylim[2],trapspacing)) 
-  coordinates(grid) <- ~x+y
-  grid <- SpatialPoints(grid)
-  traps.buff <- gBuffer(grid, width = bufferdist ,quadsegs=round(1/10,0))
-  traps.buff <- disaggregate(traps.buff)
-  return(traps.buff)
-}
-
-# extracts detections from traps
-DetectionGenerator <- function(df=NA, X = traps.buff, torus=T, timer = T){
-  df <- df[,c('ID','x','y','time')]
-  df$overlap <- rep(NA, nrow(df))
+# extracts track overlaps with detectors
+# DetectionGenerator will check every single trajectory against every trap; extremely intensive when nbObs is large
+# DetectionGeneratorLite will only check the trajectories buffering each trap for detections; bufferDist needs to be the max steplength to avoid missing dets
+DetectionGenerator <- function(movedf=NA, traps = traps, torus=T, timer = T){
+  movedf <- movedf[,c('ID','x','y','time')]
+  movedf$overlap <- rep(NA, nrow(movedf))
   xline <- list()
+  X <- traps[['trapPoly']]
   
   if (timer == T){  # set timer for the following loop
    require(pbapply)
@@ -178,17 +73,17 @@ DetectionGenerator <- function(df=NA, X = traps.buff, torus=T, timer = T){
    on.exit(close(pb))
   }
   # convert locs to indiv lines
-  for (i in 1:nrow(df)){
-    x <- rbind( df[i,c('x','y')], df[i-1,c('x','y')])
+  for (i in 1:nrow(movedf)){
+    x <- rbind( movedf[i,c('x','y')], movedf[i-1,c('x','y')])
     xline[[i]] <- Lines(list(Line(coordinates(x))), ID=paste0(i))
     if (timer == T){ # progress bar
-    setTimerProgressBar(pb, i/nrow(df))}
+    setTimerProgressBar(pb, i/nrow(movedf))}
   }
-  cat('\nLocs to lines conversion finished.\nNow, please patiently wait for line-to-detetector overlap calculation to finish :o)')
+  cat('\nLocs to lines conversion finished.\nPlease wait for line-to-detetector overlap calculation to finish :o)')
   df.lines <- SpatialLinesDataFrame(SpatialLines(xline, CRS(as.character(NA))), 
-                                    df, match.ID = FALSE)
+                                    movedf, match.ID = FALSE)
   if(torus == T){    
-    df %>% 
+    movedf %>% 
       add_rownames() %>%
       group_by(ID) %>% 
       mutate( step = lag( sqrt( (lead(x,n=1)-x)^2 + (lead(y,n=1)-y)^2 ), n=1 ) ) %>%
@@ -196,7 +91,7 @@ DetectionGenerator <- function(df=NA, X = traps.buff, torus=T, timer = T){
       `[[`("rowname") %>%
       as.numeric() -> index # create index for first line from every id OR lines that traverse landscape bounds
   } else{
-    df %>% 
+    movedf %>% 
       add_rownames() %>%
       group_by(ID) %>% 
       filter(row_number()==1) %>%
@@ -208,110 +103,290 @@ DetectionGenerator <- function(df=NA, X = traps.buff, torus=T, timer = T){
     df.lines@lines[[index[k]]]@Lines[[1]] <- NULL
   }
   
-  overlap <- over(df.lines, traps.buff, returnList = F)
+  overlap <- over(df.lines, X, returnList = F)
   df.lines@data[["overlap"]] <- overlap
   overlap.df <- df.lines[!is.na(df.lines@data[["overlap"]]),]
   x <- as.data.frame(overlap.df)
   names(x)[names(x) == 'overlap'] <- 'Site'
   return(x)
 }
-
-
-"DETECTION DATA PREP"
-# for REST
-calcStay <- function(movedf = moveSims, detdf = x1, X = traps.buff, timestep = 15, nbObs = nbObs){
-  detdf$stayTime <- rep(NA, nrow(detdf))
-  movedf$time <- rep(1:nbObs, length(unique(movedf$ID)))
+DetectionGeneratorLite <- function(movedf=NA, traps = traps, bufferDist = 10, torus=T){
+  require(data.table)
+  movedf <- as.data.table(movedf[,c('ID','x','y','time')]) # needs to be data.table
+  movedf$overlap <- rep(NA, nrow(movedf))
+  X <- traps[['trapPoly']]
   
-  polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
+  # evaluate by camera
+  for (j in 1:nrow(traps[['trapInfo']])){
+    xline <- list()
+    # subset animal locs within bufferDist away from cam j
+    limits_x <- c(traps[['trapInfo']][j,'x'] - bufferDist, traps[['trapInfo']][j,'x'] + bufferDist)
+    limits_y <- c(traps[['trapInfo']][j,'y'] - bufferDist, traps[['trapInfo']][j,'y'] + bufferDist)
+    subpts_x <- movedf[x >= limits_x[1] & x < limits_x[2]] %>%
+      setkey(y)
+    subpts_comp <- subpts_x[y >= limits_y[1] & y < limits_y[2]]
+    rm(subpts_x)
+    if(nrow(subpts_comp)==0){cat(paste('\ncam',j,'done')); next}
+    
+    # for(id in unique(subpts_comp$ID)){
+    #   lines_in_buffer0 <- movedf %>%
+    #     filter(ID == id) %>%
+    #     filter( time %in% (min(subpts_comp$time[subpts_comp$ID == id])-1):(max(subpts_comp$time[subpts_comp$ID == id])+1) ) # this needs to match the ID ffrrr
+    #   
+    #   if(exists("lines_in_buffer") == T){
+    #     lines_in_buffer <- rbind(lines_in_buffer0,lines_in_buffer)
+    #   } else{
+    #     lines_in_buffer <- lines_in_buffer0
+    #   }
+    #   rm(lines_in_buffer0)
+    # }
+    
+    lines_in_buffer <- subpts_comp %>%
+      group_by(ID) %>%
+      arrange(time) %>%
+      mutate(difftime = time - lag(time, 1, NA)) %>%
+      arrange(ID,time)
+    
+    # turn animal locs into lines
+    for (i in 1:nrow(lines_in_buffer)){
+      xline0 <- rbind( lines_in_buffer[i,c('x','y')], lines_in_buffer[i-1,c('x','y')])
+      xline[[i]] <- Lines(list(Line(coordinates(xline0))), ID=paste0(i))
+    }
+    df.lines <- SpatialLinesDataFrame(SpatialLines(xline, CRS(as.character(NA))), 
+                                      lines_in_buffer, match.ID = FALSE)
+    
+    # correct for torus
+    if(torus == T){    
+      lines_in_buffer %>% 
+        add_rownames() %>%
+        group_by(ID) %>% 
+        mutate( step = lag( sqrt( (lead(x,n=1)-x)^2 + (lead(y,n=1)-y)^2 ), n=1 ) ) %>%
+        #filter(row_number()==1 | step > 950) %>% 
+        filter(is.na(difftime) | !difftime==1 | step > 950) %>%
+        `[[`("rowname") %>%
+        as.numeric() -> index # create index for first line from every id OR lines that traverse landscape bounds
+    } else{
+      lines_in_buffer %>% 
+        add_rownames() %>%
+        group_by(ID) %>% 
+        #filter(row_number()==1) %>%
+        filter(is.na(difftime) | !difftime==1) %>%
+        `[[`("rowname") %>%
+        as.numeric() -> index # create index for first line from every id
+    }
+    
+    # correct lines
+    for(k in 1:length(index)){  # remove first line from every id
+      df.lines@lines[[index[k]]]@Lines[[1]] <- NULL
+    }
+    
+    # check for overlap
+    overlap <- over(df.lines, X[X@polygons[[j]]@ID==j], returnList = F)
+    if (all(is.na(overlap))) { cat(paste('\ncam',j,'done')); next }
+    df.lines@data[["overlap"]] <- overlap
+    overlap.df <- df.lines[!is.na(df.lines@data[["overlap"]]),]
+    x <- as.data.frame(overlap.df)
+    names(x)[names(x) == 'overlap'] <- 'Site'
+    
+    # record data
+    if ( exists("det_output")==T ){
+      det_output <- rbind(det_output, x)
+    } else {
+      det_output <- x
+    }
+    
+    cat(paste('\ncam',j,'done'))
+  } # j
   
-  for (i in 1: nrow(detdf)){
-    t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
-    
-    track <- movedf %>%
-      filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
-    coords <- coordinates(track[,c('x','y')])
-    trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
-    
-    detectorID <- which(polyID == detector)
-    
-    trackIntersect <- gIntersection(X[detectorID,],trackLine)
-    detdf$stayTime[i] <- timestep * 60 * gLength(trackIntersect)/gLength(trackLine) # in seconds (* 60 cuz timestep is in mins)
-  }
-  return(detdf)
+  return(det_output)
 }
 
-# for REM
-calcSpeed <- function(movedf = moveSims, detdf = x1, X = traps.buff, timestep = 15, nbObs = nbObs){
-  detdf$dist <- detdf$stayTime <- rep(NA, nrow(detdf))
-  movedf$time <- rep(1:nbObs, length(unique(movedf$ID)))
-  
-  polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
-  
-  for (i in 1: nrow(detdf)){
-    t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
+# applies detection decay function with distance (requires detections to be treated as 'photos'/discrete points)
+# d: vector of distances to CT 
+# perfect_dist: dist to which detection is perfect
+imperfectDet <- function(d = d, perfect_dist = 0.3, max_dist = 1)
+{
+  detType <- isDetected <- vector()
+  k = 0
+  for (t in 1:length(d)){
+    k = k + 1 # 
     
-    track <- movedf %>%
-      filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
-    coords <- coordinates(track[,c('x','y')])
-    trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
+    # simulated detection function
+    p <- (1-exp(-(0.3/d[k])^6))/(1+exp(100*(0.1-d[k]))) # https://doi.org/10.1111/j.2041-210X.2011.00094.x
     
-    detectorID <- which(polyID == detector)
-    
-    # while speed can directly be calculated from gLength(trackLine) since time units are constant in sims,
-    # this matters for aggregating consecutive encounters which means more than one straight-line track
-    trackIntersect <- gIntersection(X[detectorID,],trackLine) # this calculates distance
-    detdf$dist[i] <- gLength(trackIntersect)
-    detdf$stayTime[i] <- timestep * 60 * gLength(trackIntersect)/gLength(trackLine) # in seconds (* 60 cuz timestep is in mins)
-    
+    isDetected[k] <- rbinom(1, 1, p) # 1: detection, 0: no detection
+    if (isDetected[k] == 1){ # if detection
+      isDetected[c(k+1,k+2)] <- 1 # next two intervals recorded as 'bursts'
+      k = k + 2 # skip the two bursts
+    }
+    if(k >= length(d)){ # in case k index exceeds length of d
+      break
+    }
   }
-  return(detdf)
+  #return( data.frame(dist = as.vector(d), isDetected = isDetected[1:length(d)]) )
+  return( isDetected[1:length(d)] )
 }
 
-# for CT-DS
-calcDist <- function(movedf = moveSims, detdf = x1, X = traps.buff, timestep = 15, nbObs = nbObs){
+# converts DetectionGenerator output to 'photos'/discrete points and applies imperfectDet decay function
+# timestep of simulated movement (mins)
+# timeInt to sample movement trajectories at (secs), mimicking photo captures of CTs
+ImperfectDetConverter <- function(movedf = moveSims, detdf = detDat, traps = traps, timestep = 5, timeInt = 1, 
+                                  perfect_dist = 0.3, max_dist = 1)
+{
   dist_to_CT <- list()
-  movedf$time <- rep(1:nbObs, length(unique(movedf$ID)))
-  
+  X <- traps[["trapPoly"]]
   polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
   
-  for (i in 1: nrow(detdf)){
+  for (i in 1:nrow(detdf)){ 
+    # for every detection, find the track from the movement dataset
     t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
-    
     track <- movedf %>%
       filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
     coords <- coordinates(track[,c('x','y')])
     trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
-    
     detectorID <- which(polyID == detector)
     
-    trackIntersect <- gIntersection(X[detectorID,],trackLine)
-    segRatio <- seq(0,gLength(trackIntersect),gLength(trackLine)/(15*60))/gLength(trackIntersect)  # line segments
+    # measure the track intersecting with the detection zone, then split into temporal segments
+    trackIntersect <- gIntersection(X[detectorID,],trackLine) # portion of track intersecting with detection zone
+    timeInZone <- gLength(trackIntersect)/gLength(trackLine) * timestep * 60 # time in detection zone (seconds)
+    timeSegments <- seq(0,timeInZone,timeInt) # get time intervals to record distances at (every timeInt)
+    distSegments <- timeSegments/timeInZone
+    
+    # calculate distance to CT
     trackIntersectxy <- trackIntersect@lines[[1]]@Lines[[1]]@coords
-    
-    x3 = segRatio * trackIntersectxy[2,'x'] + (1 - segRatio) * trackIntersectxy[1,'x'] #find point on each segment
-    y3 = segRatio * trackIntersectxy[2,'y']  + (1 - segRatio) * trackIntersectxy[1,'y'] 
-    lineSegs <- data.frame(x=x3,y=y3)
-    
-    ct_midpt <- X[detectorID,]@polygons[[1]]@labpt # this is the midpoint of the CT polygon
+    x3 = distSegments * trackIntersectxy[2,'x'] + (1 - distSegments) * trackIntersectxy[1,'x'] #find point on each segment
+    y3 = distSegments * trackIntersectxy[2,'y']  + (1 - distSegments) * trackIntersectxy[1,'y'] 
+    distLocs <- data.frame(x=x3,y=y3)
+    ct_midpt <- X[detectorID,]@polygons[[1]]@labpt # this is the midpoint of the CT polygon (i.e., detection zone)
     ct_coord <- matrix(round(ct_midpt/50)*50,1,2) # get the actual CT location
-    dist_to_CT[[i]] <- e2dist(ct_coord, lineSegs)
+    dist <- as.vector(e2dist(ct_coord, distLocs))
+    
+    # calculate time at FOV entry
+    entryTime <- as.vector(e2dist(matrix(coords[1,],1,2), matrix(trackIntersectxy[1,],1,2))) / gLength(trackLine) * timestep * 60
+    
+    dist_to_CT[[i]] <- data.frame(track = i, x = x3, y = y3, time = t, dist = dist, entryTime = entryTime) # each list contains the distance to CT for every x sec interval
   }
   
-  dupTimes <- unlist(lapply(dist_to_CT, length))
+  dist_to_CT2 <- lapply(dist_to_CT, function(d){
+    d$isDetected <- imperfectDet(d = d$dist,perfect_dist = perfect_dist, max_dist = max_dist)
+    d$time_seconds <- d$time*timestep*60 + d$entryTime + (1:nrow(d)-1)*timeInt # high resolution time in seconds
+    return(d)
+  } )
+  
+  dupTimes <- unlist(lapply(dist_to_CT2, nrow))
   detdf_id <- rep(1:nrow(detdf), dupTimes)
   detdf_new <- detdf[detdf_id,]
-  detdf_new$distance <- do.call(c,dist_to_CT)
+  #detdf_new$distance <- do.call(c,dist_to_CT)
+  detdf_new <- cbind(detdf_new[c('ID','Site')], do.call(rbind,dist_to_CT2))
   
-  return(detdf)
+  return(detdf_new)
 }
 
+"DETECTION DATA PREP"
+# # for REST
+# calcStay <- function(movedf = moveSims, detdf = x1, X = traps.buff, timestep = 15, nbObs = nbObs){
+#   detdf$stayTime <- rep(NA, nrow(detdf))
+#   movedf$time <- rep(1:nbObs, length(unique(movedf$ID)))
+#   
+#   polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
+#   
+#   for (i in 1: nrow(detdf)){
+#     t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
+#     
+#     track <- movedf %>%
+#       filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
+#     coords <- coordinates(track[,c('x','y')])
+#     trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
+#     
+#     detectorID <- which(polyID == detector)
+#     
+#     trackIntersect <- gIntersection(X[detectorID,],trackLine)
+#     detdf$stayTime[i] <- timestep * 60 * gLength(trackIntersect)/gLength(trackLine) # in seconds (* 60 cuz timestep is in mins)
+#   }
+#   return(detdf)
+# }
+# 
+# # for REM
+# calcSpeed <- function(movedf = moveSims, detdf = x1, X = traps.buff, timestep = 15, nbObs = nbObs){
+#   detdf$dist <- detdf$stayTime <- rep(NA, nrow(detdf))
+#   movedf$time <- rep(1:nbObs, length(unique(movedf$ID)))
+#   
+#   polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
+#   
+#   for (i in 1: nrow(detdf)){
+#     t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
+#     
+#     track <- movedf %>%
+#       filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
+#     coords <- coordinates(track[,c('x','y')])
+#     trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
+#     
+#     detectorID <- which(polyID == detector)
+#     
+#     # while speed can directly be calculated from gLength(trackLine) since time units are constant in sims,
+#     # this matters for aggregating consecutive encounters which means more than one straight-line track
+#     trackIntersect <- gIntersection(X[detectorID,],trackLine) # this calculates distance
+#     detdf$dist[i] <- gLength(trackIntersect)
+#     detdf$stayTime[i] <- timestep * 60 * gLength(trackIntersect)/gLength(trackLine) # in seconds (* 60 cuz timestep is in mins)
+#     
+#   }
+#   return(detdf)
+# }
+# 
+# # for CT-DS
+# calcDist <- function(movedf = moveSims, detdf = x1, X = traps.buff, timestep = 15, nbObs = nbObs, timeInt = 2){
+#   dist_to_CT <- list()
+#   movedf$time <- rep(1:nbObs, length(unique(movedf$ID)))
+#   
+#   polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
+#   
+#   for (i in 1:nrow(detdf)){
+#     t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
+#     
+#     track <- movedf %>%
+#       filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
+#     coords <- coordinates(track[,c('x','y')])
+#     trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
+#     
+#     detectorID <- which(polyID == detector)
+#     trackIntersect <- gIntersection(X[detectorID,],trackLine) # portion of track intersecting with detection zone
+#     timeInZone <- gLength(trackIntersect)/gLength(trackLine) * timestep * 60 # time in detection zone (seconds)
+#     timeSegments <- seq(0,timeInZone,timeInt) # get time intervals to record distances at (every timeInt)
+#     distSegments <- timeSegments/timeInZone
+#     
+#     trackIntersectxy <- trackIntersect@lines[[1]]@Lines[[1]]@coords
+#     x3 = distSegments * trackIntersectxy[2,'x'] + (1 - distSegments) * trackIntersectxy[1,'x'] #find point on each segment
+#     y3 = distSegments * trackIntersectxy[2,'y']  + (1 - distSegments) * trackIntersectxy[1,'y'] 
+#     distLocs <- data.frame(x=x3,y=y3)
+#     ct_midpt <- X[detectorID,]@polygons[[1]]@labpt # this is the midpoint of the CT polygon (i.e., detection zone)
+#     ct_coord <- matrix(round(ct_midpt/50)*50,1,2) # get the actual CT location
+#     dist_to_CT[[i]] <- e2dist(ct_coord, distLocs)
+#   }
+#   
+#   dupTimes <- unlist(lapply(dist_to_CT, length))
+#   detdf_id <- rep(1:nrow(detdf), dupTimes)
+#   detdf_new <- detdf[detdf_id,]
+#   detdf_new$distance <- do.call(c,dist_to_CT)
+#   
+#   return(detdf_new)
+# }
 
+
+# euclidean distance btw two points
 e2dist <- function (x, y){
   i <- sort(rep(1:nrow(y), nrow(x)))
   dvec <- sqrt((x[, 1] - y[i, 1])^2 + (x[, 2] - y[i, 2])^2)
   matrix(dvec, nrow = nrow(x), ncol = nrow(y), byrow = F)
 }
+
+# minimum distance to line
+dist2d <- function(a,b,c) {
+  v1 <- b - c
+  v2 <- a - b
+  m <- cbind(v1,v2)
+  d <- abs(det(m))/sqrt(sum(v1*v1))
+  return(d)
+} 
 
 "PLOTTING"
 plotTraject <- function(df = df, plotit = X, torus=FALSE){
