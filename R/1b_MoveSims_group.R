@@ -6,11 +6,11 @@
 
 library(CircStats)
 library(data.table)
-# source("R/0_functions.R")
+source("0_functions.R")
 
 '------ Run via shell script ------'
 # get the input passed from the shell script (arg[1] for scenario, arg[2] for iter, arg[3] for group size)
-# e.g., `Rscript --vanilla ./R/1c_MoveSims_group.R small 1 20`
+# e.g., `Rscript --vanilla ./R/1c_MoveSims_group.R hi 1 20`
 args <- commandArgs(trailingOnly = TRUE)
 str(args)
 cat(args, sep = "\n")
@@ -25,241 +25,121 @@ if (length(args) <= 1) {
   groupSize = as.numeric(args[3])
 }
 
-if (scenario == 'small'){
+if (scenario == 'hi'){
   if (!groupSize %in% c(20,100)) stop("Group size only programmed for 20 & 100 for high density.")
   if(groupSize == 20){
     # AC distribution params
-    minDist = 10; borderBuff = 20 # min dist between ACs; min dist between ACs and landscape border
+    minDist = 100; borderBuff = 200 # min dist between ACs; min dist between ACs and landscape border
     # directional distribution (von Mises) params
-    kappac <- c(0.75) # group centroid concentration/attraction strength [also controls group range size]
-    etac <- c(0.85) # centroid weight of CRW component in BCRW for centroid movement
-    kappaind <- c(4, 3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
+    kappac <- c(6) # group centroid concentration param 
+    etac <- c(0.85) # group centroid CRW weight
+    kappaind <- c(6, 3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
     # state transition probabilites
     gamma <- matrix(c(0.95, 0.3, 0.05, 0.7), ncol = 2) # state transition probability matrix
   }
   if(groupSize == 100){
     # AC distribution params
-    minDist = 150; borderBuff = 75 # min dist between ACs; min dist between ACs and landscape border
+    minDist = 1500; borderBuff = 750 # min dist between ACs; min dist between ACs and landscape border
     # directional distribution (von Mises) params
-    kappac <- c(1) # group centroid concentration/attraction strength
-    etac <- c(0.95) # centroid weight of CRW component in BCRW for centroid movement
-    kappaind <- c(3, 4) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
+    kappac <- c(4) # group centroid concentration param 
+    etac <- c(1) # group centroid CRW weight
+    kappaind <- c(4,3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
     # state transition probabilites
-    gamma <- matrix(c(0.95, 0.2, 0.05, 0.8), ncol = 2) # state transition probability matrix
+    gamma <- matrix(c(0.95, 0.3, 0.05, 0.7), ncol = 2) # state transition probability matrix
   }
-
+  
   # step-length params
-  ac <- c(2) # centroid mean
-  bc <- c(1.35) # centriod sd
-  aind <- c(2.5, 2.5) # individuals' state specific means
-  bind <- c(1.72, 1.72) # individuals' state specific sds
+  ac <- c(35) # centroid mean
+  bc <- c(25) # centriod sd
+  aind <- c(48, 48) # individuals' state specific means
+  bind <- c(30, 30) # individuals' state specific sds
   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max.   
   # 48.26  499.93  628.96  659.67  785.96 2962.88
   N = 2000
 }
 
-if (scenario == 'medium'){
+if (scenario == 'med'){
   if (!groupSize %in% c(5,25)) stop("Group size only programmed for 5 & 25 for medium density.")
+  if(groupSize == 5){
+    # AC distribution params
+    minDist = 1000; borderBuff = 250
+    # directional distribution (von Mises) params
+    kappac <- c(2) 
+    etac <- c(0.7) 
+    kappaind <- c(8, 3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
+    # state transition probabilites
+    gamma <- matrix(c(0.99, 0.3, 0.01, 0.7), ncol = 2) # state transition probability matrix
+  }
   if(groupSize == 25){
     # AC distribution params
-    minDist = 250; borderBuff = 75 # min dist between ACs; min dist between ACs and landscape border
+    minDist = 2500; borderBuff = 750 # min dist between ACs; min dist between ACs and landscape border
     # directional distribution (von Mises) params
-    kappac <- c(0.75) # group centroid concentration/attraction strength [also controls group range size]
-    etac <- c(0.85) # centroid weight of CRW component in BCRW for centroid movement
-    kappaind <- c(4, 3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
+    kappac <- c(1) 
+    etac <- c(0.75) 
+    kappaind <- c(6, 3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
     # state transition probabilites
     gamma <- matrix(c(0.95, 0.3, 0.05, 0.7), ncol = 2) # state transition probability matrix
   }
-  if(groupSize == 5){
-    # AC distribution params
-    minDist = 100; borderBuff = 25
-    # directional distribution (von Mises) params
-    kappac <- c(2) # group centroid concentration/attraction strength [also controls group range size]
-    etac <- c(0.85) # centroid weight of CRW component in BCRW for centroid movement
-    kappaind <- c(4, 2) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
-    # state transition probabilites
-    gamma <- matrix(c(0.95, 0.4, 0.05, 0.6), ncol = 2) # state transition probability matrix
-  }
   # step-length params
-  ac <- c(3.2) # centroid mean
-  bc <- c(2) # centriod sd
-  aind <- c(5.5, 5.5) # individuals' state specific means
-  bind <- c(3.2, 3.2) # individuals' state specific sds
+  ac <- c(80) # centroid mean
+  bc <- c(50) # centriod sd
+  aind <- c(100, 100) # individuals' state specific means
+  bind <- c(62.5, 62.5) # individuals' state specific sds
   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max.   
   # 48.26  499.93  628.96  659.67  785.96 2962.88
   N = 200
 }
 
-# # directional distribution (von Mises) params
-# etac <- c(0.85) # centroid weight of CRW component in BCRW for centroid movement
-# kappaind <- c(4, 3) # state-dependent concentration parameters for indiv movement [i.e., directedness towards group AC; directedness in CRW component]
-
-"-------- Simulation functions --------"
-# generate ACs
-genAC <- function(N = 100, minDist = 10, borderBuff = 0, xlim = c(0,1000), ylim = c(0,1000)){
-  output <- as.data.frame(matrix(NA, N, 2))
-  colnames(output) <- c('x','y')
-  output[1,] <-  c(runif(1,xlim[1]+borderBuff,xlim[2]-borderBuff), 
-                   runif(1,ylim[1]+borderBuff,ylim[2]-borderBuff))
-  
-  for (i in 2:N){ 
-    repeat{ # rejection sampling
-      cand <- c(runif(1,xlim[1]+borderBuff,xlim[2]-borderBuff),
-                runif(1,ylim[1]+borderBuff,ylim[2]-borderBuff))
-      
-      distapart <- apply(output, 1, function(x) sqrt( (x[1] - cand[1])^2 + (x[2] - cand[2])^2) )
-      if (all(distapart > minDist, na.rm = T) ) { break }
-    } # repeat
-    # input
-    output[i,] <- cand
-  }
-  return(output)
-}
-simMoveGroup <- function(nbObs = nbObs, xy0 = c(0,0), groupSize = groupSize, groupID = 1, memberID = 1:groupSize, torus = T)
-{
-  # Generation of the state sequences for the different individuals
-  Zind <- vector("list")
-  for (k in 1:groupSize) {
-    Zind[[k]] <- sample(1:nState, size = 1, prob = delta)
-  }
-  for (k in 2:nbObs) {
-    for (j in 1:groupSize) {
-      Zind[[j]][k] <- sample(1:nState, size = 1, prob = gamma[Zind[[j]][k - 1],])
-    }
-  }
-  # Choice of the initial position of the centroid and of the location of the centroid’s centre of attraction (C)
-  X <- matrix(rep(NA, 2 * nbObs), ncol = 2)
-  X[1, ] <- xy0
-  C <- matrix(xy0, byrow = T, ncol = 2)
-  
-  # Choice of the (random) initial positions of individuals 
-  # Xind is the list that will comprise all individuals' simulated locations
-  Xind <- vector("list")
-  for (k in 1:groupSize) {
-    Xind[[k]] <- matrix(rep(NA, 2 * nbObs), ncol = 2)
-    Xind[[k]][1, ] <- c(rnorm(1,xy0[1], 1),rnorm(1,xy0[2], 1))
-  }
-  
-  phi <- 0
-  phiind <- rep(0, groupSize)
-  
-  for (k in 1:(nbObs - 1)) {
-    ## start generation of centroid location at time k+1
-    coo <- C[, ] - X[k, ] # xy diff btw centroid AC and current centroid loc
-    mu <- Arg(coo[1] + (0+1i) * coo[2]) # direction towards centroid AC
-    if (mu < 0)
-      mu <- mu + 2 * pi # correct for direction
-    mu.av <- Arg(etac * exp(phi * (0+1i)) + (1 - etac) * exp(mu * (0+1i))) # direction also but??
-    phi <- rvm(1, mean = mu.av, k = kappac) # draw next direction
-    if (k==1){
-      step.len.ac <-  rgamma(1, shape = ac^2/bc^2, scale = bc^2/ac) # first step-length
-    } else{
-      step.len.ac <- 0.5*(step.len.ac + rgamma(1, shape = ac^2/bc^2, scale = bc^2/ac)) # subsequent step-lengths are correlated to previous
-    }
-    step.ac <- step.len.ac * c(Re(exp((0+1i) * phi)), Im(exp((0+1i) * phi))) # dist in xy to move 
-    X[k + 1, ] <- X[k, ] + step.ac # next loc 
-    ## start generation of individuals' locations at time k+1
-    for (j in 1:groupSize) {
-      if (s.ty[Zind[[j]][k]] == 1) { # BCRW
-        coo <- X[k + 1, ] - Xind[[j]][k, ] # xy diff btw centroid loc and indiv loc
-        mu <- Arg(coo[1] + (0+1i) * coo[2])
-        if (mu < 0)
-          mu <- mu + 2 * pi
-        phiind[j] <- rvm(1, mean = mu, k = kappaind[Zind[[j]][k]])
-      }
-      if (s.ty[Zind[[j]][k]] == 0) { # CRW
-        mu <- rvm(1, mean = 0, k = kappaind[Zind[[j]][k]])
-        phiind[j] <- phiind[j] + mu
-      }
-      if (k==1){ # first step-length
-        step.len <- rgamma(1, shape = aind[Zind[[j]][k]]^2/bind[Zind[[j]][k]]^2,
-                            scale = bind[Zind[[j]][k]]^2/aind[Zind[[j]][k]])
-      } else{
-        step.len <- 0.5*( step.len + rgamma(1, shape = aind[Zind[[j]][k]]^2/bind[Zind[[j]][k]]^2,
-                                            scale = bind[Zind[[j]][k]]^2/aind[Zind[[j]][k]]) )
-      }
-      step <- step.len * c(Re(exp((0+1i) * phiind[j])), Im(exp((0+1i) * phiind[j])))
-      Xind[[j]][k + 1, ] <- Xind[[j]][k, ] + step
-    }
-  }
-  # compile output
-  xy <- as.data.table(do.call(rbind, Xind))
-  colnames(xy) <- c('x','y')
-  xy$ID <- rep(memberID, each=nbObs)
-  xy$time <- rep(1:nbObs, times = groupSize)
-  xy$groupID <- rep(groupID,nrow(xy))
-  
-  # correct coordinates for torus (data.table for fast math)
-  if (torus == T){
-    xy[x <= xlim[1], x := x + xlim[2]]
-    xy[x >= xlim[2], x := x - xlim[2]]
-    xy[y <= ylim[1], y := y + ylim[2]]
-    xy[y >= ylim[2], y := y - ylim[2]]
-  }
-  return(xy)
-}
 "-------- Prep sim parameters --------"
 # set general parameters
 days = 100
-nbObs <- 12*12*days # 10-min timesteps, 12-h activity, 50 days
-xlim <- ylim <- c(0,1000) # landscape bounds
-
-# state params
-nState = 2
-s.ty <- c(1, 0) # (1: BRW; 0: CRW)
-#gamma <- matrix(c(0.95, 0.3, 0.05, 0.7), ncol = 2) # state transition probability matrix
-delta <- solve(diag(nState) - t(gamma) + 1, rep(1, nState)) # corresponding stationary distribution of the Markov chain
-
-# step-length distribution (gamma) params
-# ac <- c(4) # centroid mean
-# bc <- c(2.5) # centriod sd
-# aind <- c(5.5, 5.5) # individuals' state specific means
-# bind <- c(3.2, 3.2) # individuals' state specific sds
+nbObs <- 12*9*days # 1-min timesteps, 9-h activity, 50 days
+xlim <- ylim <- c(0,10000) # landscape bounds
 
 "-------- Run movement simulations --------"
-nGroups = N/groupSize
 # generate group centroid's ACs
+nGroups = N/groupSize
 ACs <- genAC(N = nGroups, minDist = minDist, borderBuff = borderBuff, xlim = xlim, ylim = ylim)
-
-phi <- 0
-phiind <- rep(0, groupSize)
 
 simDat <- list()
 for (id in 1:nGroups){
   memberID <- groupSize * (id-1) + 1:groupSize
-  simDat[[id]] <- simMoveGroup(nbObs = nbObs, xy0 = as.numeric(ACs[id,]), 
-                               groupSize = groupSize, groupID = id, 
-                               memberID = memberID, torus = F)
+  simDat[[id]] <- simMoveGroup(nbObs = nbObs, burnin = 12*9*1,
+                               groupSize = groupSize, groupID = id, memberID = memberID,
+                               # group centroid
+                               xy0 = as.numeric(ACs[id,]), # ac loc
+                               ac = ac, bc = bc, # step-length params
+                               kappac = kappac, etac = etac, # concentration; CRW:BRW weights
+                               # individuals
+                               aind = aind, bind = bind, # state-specific step-length params
+                               kappaind = kappaind, # state-specific concentration params
+                               # state params
+                               gamma = gamma, 
+                               xlim = xlim, ylim = xlim, torus = T)
   print(paste('Group',id,'done'))
 }
 
 # compile into dataframe
 moveSims <- data.table(do.call(rbind, simDat))
 
-# correct coordinates for torus (data.table for fast math)
-moveSims[x <= xlim[1], x := x + xlim[2]]
-moveSims[x >= xlim[2], x := x - xlim[2]]
-moveSims[y <= ylim[1], y := y + ylim[2]]
-moveSims[y >= ylim[2], y := y - ylim[2]]
-
 # save
 write.csv(moveSims,row.names=FALSE,file=paste('Data/MovementSims/simDat_', scenario, '_grp_', iter, '_gSize', groupSize,'.csv', sep=''))
 
 "-------- Update progress bar --------"
 # count files for each scenario for group
-sm20 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_small_grp_.*_gSize20 | wc -l", intern = T))
-sm100 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_small_grp_.*_gSize100 | wc -l", intern = T))
-med5 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_medium_grp_.*_gSize5 | wc -l", intern = T))
-med25 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_medium_grp_.*_gSize25 | wc -l", intern = T))
+hi20 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_hi_grp_.*_gSize20 | wc -l", intern = T))
+hi100 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_hi_grp_.*_gSize100 | wc -l", intern = T))
+med5 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_med_grp_.*_gSize5 | wc -l", intern = T))
+med25 <- as.numeric(system("ls -1 ./Data/MovementSims/| grep ^simDat_med_grp_.*_gSize25 | wc -l", intern = T))
 
 nsims <- 100
-data <- rbind(c(sm20,sm100,med5,med25), 
-               nsims-c(sm20,sm100,med5,med25))
-colnames(data) <- c("sm20","sm100","med5","med25")
+data <- rbind(c(hi20,hi100,med5,med25), 
+              nsims-c(hi20,hi100,med5,med25))
+colnames(data) <- c("hi20","hi100","med5","med25")
 
 png("Data/MovementSims/GroupMovementProgress.png", type="cairo")
-plotx<- barplot(data, horiz = TRUE, names.arg = c("sm20","sm100","med5","med25"), main = "MovementSims (grp)")
-text(x = c(sm20,sm100,med5,med25)+5, y = plotx, label = data[1,], pos = 1, cex = 0.8, col = "red")
+plotx<- barplot(data, horiz = TRUE, names.arg = c("hi20","hi100","med5","med25"), main = "MovementSims (grp)")
+text(x = c(hi20,hi100,med5,med25)+5, y = plotx, label = data[1,], pos = 1, cex = 0.8, col = "red")
 dev.off()
 
 # "-------- Check --------"
@@ -268,7 +148,7 @@ dev.off()
 # simDat <- as.data.frame(do.call(rbind, Xind))
 # simDat$ID <- rep(1:groupSize, each=nbObs)
 # colnames(simDat)[1:2] <- c('x','y')
-# calculate steplength
+# # calculate steplength
 # moveSims <- moveSims %>%
 #   group_by(ID) %>%
 #   mutate( step = lag( sqrt( (lead(x,n=1)-x)^2 + (lead(y,n=1)-y)^2 ), n=1 ) ) %>%

@@ -5,19 +5,187 @@
 
 "MOVEMENT SIMULATIONS"
 # Generate activity centres (ACs)
-generateAC <- function(N = 5, xlim = c(0,500), ylim = c(0,500), buffer = 50){
-  ACs <- matrix(NA, N, 2)
-  ACs[1,] <- c(runif(1, xlim[1], xlim[2]), runif(1, ylim[1], ylim[2]))
-  for (i in 2:N){
-    ACcand <- c(runif(1, xlim[1], xlim[2]), runif(1, ylim[1], ylim[2]))
-    distapart <- apply(ACs, 1, function(x) sqrt( (x[1] - ACcand[1])^2 + (x[2] - ACcand[2])^2) )
-    while( any(distapart <= buffer, na.rm = T) ){
-      ACcand <- c(runif(1, xlim[1], xlim[2]), runif(1, ylim[1], ylim[2]))
-      distapart <- apply(ACs, 1, function(x) sqrt( (x[1] - ACcand[1])^2 + (x[2] - ACcand[2])^2) )
+genAC <- function(N = 100, minDist = 10, borderBuff = 0, xlim = c(0,1000), ylim = c(0,1000)){
+  output <- as.data.frame(matrix(NA, N, 2))
+  colnames(output) <- c('x','y')
+  output[1,] <-  c(runif(1,xlim[1]+borderBuff,xlim[2]-borderBuff), 
+                   runif(1,ylim[1]+borderBuff,ylim[2]-borderBuff))
+  
+  for (i in 2:N){ 
+    repeat{ # rejection sampling
+      cand <- c(runif(1,xlim[1]+borderBuff,xlim[2]-borderBuff),
+                runif(1,ylim[1]+borderBuff,ylim[2]-borderBuff))
+      
+      distapart <- apply(output, 1, function(x) sqrt( (x[1] - cand[1])^2 + (x[2] - cand[2])^2) )
+      if (all(distapart > minDist, na.rm = T) ) { break }
+    } # repeat
+    # input
+    output[i,] <- cand
+  }
+  return(output)
+}
+
+simMove <- function(nbObs = nbObs, burnin = 12*12*1, xy0 = c(0,0), ID = 1, 
+                    aind = aind, bind = bind, # step length params
+                    kappac = kappac, etac = etac, # concentration param (i.e., directedness); weight of CRW:BRW component
+                    xlim = c(0,10000), ylim = c(0,10000), torus = T)
+{
+  # adapted from Langrock et al. (2014): https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12155 
+  # Choice of the initial position of the individual and of the location of the individual’s centre of attraction (C)
+  timesteps <- nbObs + burnin
+  X <- matrix(rep(NA, 2 * timesteps), ncol = 2)
+  X[1, ] <- xy0
+  C <- matrix(xy0, byrow = T, ncol = 2)
+  
+  phi <- 0
+  
+  for (k in 1:(timesteps - 1)) {
+    ## start generation of centroid location at time k+1
+    coo <- C[, ] - X[k, ] # xy difference btw individual's centre and its current location
+    mu <- Arg(coo[1] + (0+1i) * coo[2]) # direction towards individual's centre
+    if (mu < 0)
+      mu <- mu + 2 * pi # correct for direction
+    # expected movement direction: weighted average of CRW and BRW [#Eq-1.2]
+    mu.av <- Arg(etac * exp(phi * (0+1i)) + (1 - etac) * exp(mu * (0+1i)))
+    phi <- rvm(1, mean = mu.av, k = kappac) # draw next direction [#Eq-1.1]
+    if (k==1){
+      step.len <-  rgamma(1, shape = aind^2/bind^2, scale = bind^2/aind) # first step-length
+    } else{
+      step.len <- 0.5*(step.len + rgamma(1, shape = aind^2/bind^2, scale = bind^2/aind)) # subsequent step-lengths are correlated to previous
     }
-    ACs[i,] <- ACcand 
+    step <- step.len * c(Re(exp((0+1i) * phi)), Im(exp((0+1i) * phi))) # dist in xy to move 
+    X[k + 1, ] <- X[k, ] + step # next loc 
+  }
+  # compile output
+  xy <- as.data.table(X[(burnin+1):timesteps,]) # discard burnin
+  colnames(xy) <- c('x','y')
+  xy$ID <- rep(ID, each=nbObs)
+  xy$time <- rep(1:nbObs)
+  
+  # correct coordinates for torus (data.table for fast math)
+  if (torus == T){
+    xy[x <= xlim[1], x := x + xlim[2]]
+    xy[x >= xlim[2], x := x - xlim[2]]
+    xy[y <= ylim[1], y := y + ylim[2]]
+    xy[y >= ylim[2], y := y - ylim[2]]
+  }
+  return(xy)
+}
+
+simMoveGroup <- function(nbObs = nbObs, burnin = 12*12*1,
+                         groupSize = groupSize, groupID = 1, memberID = 1:groupSize,
+                         # group centroid
+                         xy0 = c(0,0), # activity centre loc (also starting loc)
+                         ac = 32, bc = 20, # step-length params
+                         kappac = kappac, etac = etac, # concentration param (i.e., directedness); weight of CRW:BRW component
+                         # individuals
+                         gamma = gamma, # state transition probability matrix
+                         aind = c(55, 55), bind = c(32, 32), # state-specific step-length params
+                         kappaind = kappaind, # state-specific concentration params (i.e., directedness)
+                         xlim = c(0,10000), ylim = c(0,10000), torus = T)
+{
+  # adapted from Langrock et al. (2014): https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.12155 
+  # state params
+  nState = 2
+  s.ty <- c(1, 0) # (1: BRW; 0: CRW)
+  delta <- solve(diag(nState) - t(gamma) + 1, rep(1, nState)) # corresponding stationary distribution of the Markov chain
+  
+  # Choice of the initial position of the centroid and of the location of the centroid’s centre of attraction (C)
+  timesteps <- nbObs + burnin
+  X <- matrix(rep(NA, 2 * timesteps), ncol = 2)
+  X[1, ] <- xy0
+  C <- matrix(xy0, byrow = T, ncol = 2)
+  
+  # Generation of the state sequences for the different individuals
+  Zind <- vector("list")
+  for (k in 1:groupSize) {
+    Zind[[k]] <- sample(1:nState, size = 1, prob = delta)
+  }
+  for (k in 2:timesteps) {
+    for (j in 1:groupSize) {
+      Zind[[j]][k] <- sample(1:nState, size = 1, prob = gamma[Zind[[j]][k - 1],])
+    }
   }
   
+  # Choice of the (random) initial positions of individuals 
+  # Xind is the list that will comprise all individuals' simulated locations
+  Xind <- vector("list")
+  for (k in 1:groupSize) {
+    Xind[[k]] <- matrix(rep(NA, 2 * timesteps), ncol = 2)
+    Xind[[k]][1, ] <- c(rnorm(1,xy0[1], 1),rnorm(1,xy0[2], 1))
+  }
+  
+  phi <- 0
+  phiind <- rep(0, groupSize)
+  
+  for (k in 1:(timesteps - 1)) {
+    ## start generation of centroid location at time k+1
+    coo <- C[, ] - X[k, ] # xy diff btw centroid's AC and centroid's current location
+    mu <- Arg(coo[1] + (0+1i) * coo[2]) # direction towards centroid's AC
+    if (mu < 0)
+      mu <- mu + 2 * pi # correct for direction
+    # expected movement direction: weighted average of CRW and BRW [#Eq-1.2]
+    mu.av <- Arg(etac * exp(phi * (0+1i)) + (1 - etac) * exp(mu * (0+1i)))
+    phi <- rvm(1, mean = mu.av, k = kappac) # draw next direction [#Eq-1.1]
+    if (k==1){
+      step.len.ac <-  rgamma(1, shape = ac^2/bc^2, scale = bc^2/ac) # first step-length
+    } else{
+      # subsequent step-lengths are correlated to previous
+      step.len.ac <- 0.5*(step.len.ac + rgamma(1, shape = ac^2/bc^2, scale = bc^2/ac)) 
+    }
+    step.ac <- step.len.ac * c(Re(exp((0+1i) * phi)), Im(exp((0+1i) * phi))) # dist in xy to move
+    X[k + 1, ] <- X[k, ] + step.ac # next loc 
+    
+    ## start generation of individuals' locations at time k+1
+    # first draw the mean step-length for the group at time t
+    if (k==1){ # first step-length
+      step.len <- rgamma(1, shape = aind[Zind[[j]][k]]^2/bind[Zind[[j]][k]]^2,
+                         scale = bind[Zind[[j]][k]]^2/aind[Zind[[j]][k]])
+    } else{
+      step.len <- 0.5*( step.len + rgamma(1, 
+                                          shape = aind[Zind[[j]][k]]^2/bind[Zind[[j]][k]]^2,
+                                          scale = bind[Zind[[j]][k]]^2/aind[Zind[[j]][k]]) )
+    }
+    
+    for (j in 1:groupSize) {
+      if (s.ty[Zind[[j]][k]] == 1) { # state 1: BRW
+        coo <- X[k + 1, ] - Xind[[j]][k, ] # xy diff btw centroid loc and indiv loc
+        mu <- Arg(coo[1] + (0+1i) * coo[2])
+        if (mu < 0)
+          mu <- mu + 2 * pi
+        phiind[j] <- rvm(1, mean = mu, k = kappaind[Zind[[j]][k]])
+      }
+      if (s.ty[Zind[[j]][k]] == 0) { # state 2: CRW
+        mu <- rvm(1, mean = 0, k = kappaind[Zind[[j]][k]])
+        phiind[j] <- phiind[j] + mu
+      }
+      
+      # ind steps for time t are normally distributed around step.len
+      repeat{
+        step.len.ind <- rnorm(1, step.len, step.len/10)
+        if (step.len.ind > 0){break}
+      }
+      
+      step <- step.len * c(Re(exp((0+1i) * phiind[j])), Im(exp((0+1i) * phiind[j])))
+      Xind[[j]][k + 1, ] <- Xind[[j]][k, ] + step
+    }
+  }
+  # compile output
+  Xind <- lapply(Xind, function(x) x[(burnin+1):timesteps,]) # discard burnin
+  xy <- as.data.table(do.call(rbind, Xind))
+  colnames(xy) <- c('x','y')
+  xy$ID <- rep(memberID, each=nbObs)
+  xy$time <- rep(1:nbObs, times = groupSize)
+  xy$groupID <- rep(groupID,nrow(xy))
+  
+  # correct coordinates for torus (data.table for fast math)
+  if (torus == T){
+    xy[x <= xlim[1], x := x + xlim[2]]
+    xy[x >= xlim[2], x := x - xlim[2]]
+    xy[y <= ylim[1], y := y + ylim[2]]
+    xy[y >= ylim[2], y := y - ylim[2]]
+  }
+  return(xy)
 }
 
 "DETECTION SIMULATIONS"
@@ -162,7 +330,7 @@ DetectionGeneratorLite <- function(movedf=NA, traps = traps, bufferDist = 10, to
         group_by(ID) %>% 
         mutate( step = lag( sqrt( (lead(x,n=1)-x)^2 + (lead(y,n=1)-y)^2 ), n=1 ) ) %>%
         #filter(row_number()==1 | step > 950) %>% 
-        filter(is.na(difftime) | !difftime==1 | step > 950) %>%
+        filter(is.na(difftime) | !difftime==1 | step > 5000) %>%
         `[[`("rowname") %>%
         as.numeric() -> index # create index for first line from every id OR lines that traverse landscape bounds
     } else{
@@ -176,7 +344,7 @@ DetectionGeneratorLite <- function(movedf=NA, traps = traps, bufferDist = 10, to
     }
     
     # correct lines
-    for(k in 1:length(index)){  # remove first line from every id
+    for(k in 1:length(index)){  # remove first line from every id OR lines that traverse landscape bounds (for torus=T)
       df.lines@lines[[index[k]]]@Lines[[1]] <- NULL
     }
     
@@ -204,24 +372,29 @@ DetectionGeneratorLite <- function(movedf=NA, traps = traps, bufferDist = 10, to
 # applies detection decay function with distance (requires detections to be treated as 'photos'/discrete points)
 # d: vector of distances to CT 
 # perfect_dist: dist to which detection is perfect
-imperfectDet <- function(d = d, perfect_dist = 0.3, max_dist = 1)
+imperfectDet <- function(d = d, perfect_dist = 3, max_dist = 10, burst = T, bursts = 2)
 {
   detType <- isDetected <- vector()
   k = 0
   for (t in 1:length(d)){
     k = k + 1 # 
     
-    # simulated detection function
-    p <- (1-exp(-(0.3/d[k])^6))/(1+exp(100*(0.1-d[k]))) # https://doi.org/10.1111/j.2041-210X.2011.00094.x
+    # simulated detection function (https://doi.org/10.1111/j.2041-210X.2011.00094.x)
+    # p <- (1-exp(-(3/d[k])^6))/(1+exp(10*(1-d[k])))
+    p <- 1-exp(-(3/d[k])^6)
     
     isDetected[k] <- rbinom(1, 1, p) # 1: detection, 0: no detection
-    if (isDetected[k] == 1){ # if detection
-      isDetected[c(k+1,k+2)] <- 1 # next two intervals recorded as 'bursts'
-      k = k + 2 # skip the two bursts
+    
+    if (burst == T) {
+      if (isDetected[k] == 1){ # if detection
+        isDetected[k+1:bursts] <- 1 # next two intervals recorded as 'bursts'
+        k = k + bursts # skip the two bursts
+      }
+      if(k >= length(d)){ # in case k index exceeds length of d
+        break
+      }
     }
-    if(k >= length(d)){ # in case k index exceeds length of d
-      break
-    }
+
   }
   #return( data.frame(dist = as.vector(d), isDetected = isDetected[1:length(d)]) )
   return( isDetected[1:length(d)] )
@@ -231,7 +404,7 @@ imperfectDet <- function(d = d, perfect_dist = 0.3, max_dist = 1)
 # timestep of simulated movement (mins)
 # timeInt to sample movement trajectories at (secs), mimicking photo captures of CTs
 ImperfectDetConverter <- function(movedf = moveSims, detdf = detDat, traps = traps, timestep = 5, timeInt = 1, 
-                                  perfect_dist = 0.3, max_dist = 1)
+                                  perfect_dist = 3, max_dist = 10)
 {
   dist_to_CT <- list()
   X <- traps[["trapPoly"]]
@@ -257,9 +430,10 @@ ImperfectDetConverter <- function(movedf = moveSims, detdf = detDat, traps = tra
     x3 = distSegments * trackIntersectxy[2,'x'] + (1 - distSegments) * trackIntersectxy[1,'x'] #find point on each segment
     y3 = distSegments * trackIntersectxy[2,'y']  + (1 - distSegments) * trackIntersectxy[1,'y'] 
     distLocs <- data.frame(x=x3,y=y3)
-    ct_midpt <- X[detectorID,]@polygons[[1]]@labpt # this is the midpoint of the CT polygon (i.e., detection zone)
-    ct_coord <- matrix(round(ct_midpt/50)*50,1,2) # get the actual CT location
-    dist <- as.vector(e2dist(ct_coord, distLocs))
+    #ct_midpt <- X[detectorID,]@polygons[[1]]@labpt # this is the midpoint of the CT polygon (i.e., detection zone)
+    #ct_coord <- matrix(round(ct_midpt/50)*50,1,2) # get the actual CT location
+    ct_coord <- traps[["trapInfo"]][detectorID, c('x','y')]
+    dist <- as.vector(e2dist(ct_coord, distLocs)) # euclidean distance between CT and points on line
     
     # calculate time at FOV entry
     entryTime <- as.vector(e2dist(matrix(coords[1,],1,2), matrix(trackIntersectxy[1,],1,2))) / gLength(trackLine) * timestep * 60
@@ -268,8 +442,8 @@ ImperfectDetConverter <- function(movedf = moveSims, detdf = detDat, traps = tra
   }
   
   dist_to_CT2 <- lapply(dist_to_CT, function(d){
-    d$isDetected <- imperfectDet(d = d$dist,perfect_dist = perfect_dist, max_dist = max_dist)
-    d$time_seconds <- d$time*timestep*60 + d$entryTime + (1:nrow(d)-1)*timeInt # high resolution time in seconds
+    d$isDetected <- imperfectDet(d = d$dist,perfect_dist = perfect_dist, max_dist = max_dist, burst = T, bursts = 2)
+    d$time_seconds <- d$time*timestep*60 + d$entryTime + (1:nrow(d)-1)*timeInt # high resolution time in seconds;  (1:nrow(d)-1)
     return(d)
   } )
   
@@ -281,6 +455,95 @@ ImperfectDetConverter <- function(movedf = moveSims, detdf = detDat, traps = tra
   
   return(detdf_new)
 }
+
+# this version splits *entire* track into equally spaced points (acc. to time interval), and samples points overlapping the FOV
+DetSamplPoints <- function(movedf = moveSims, detdf = detDat, traps = traps, timestep = 5, timeInt = 1, 
+                                   perfect_dist = 3, max_dist = 10)
+{
+  dist_to_CT <- list()
+  X <- traps[["trapPoly"]]
+  polyID <- sapply(slot(X, "polygons"), function(x) slot(x, "ID"))
+  
+  for (i in 1:nrow(detdf)){ 
+    # for every detection, find the track from the movement dataset
+    t <- detdf[i,'time']; id <- detdf[i,'ID']; detector <- detdf[i,'Site']
+    track <- movedf %>%
+      filter(ID == id & time %in% (t-1):t ) %>%  as.data.frame()
+    coords <- coordinates(track[,c('x','y')])
+    # trackLine <- SpatialLines(list(Lines(list( Line(coords)), "id" )))
+    detectorID <- which(polyID == detector)
+    
+    # split track  into temporal segments
+    timeInSec <- timestep * 60 # time in seconds
+    distSegments <- seq(0,timeInSec,timeInt) / timeInSec # get time intervals to record distances at (every timeInt) as proportion of entire track
+    x3 = distSegments * track[2,'x'] + (1 - distSegments) * track[1,'x'] #find point on each segment
+    y3 = distSegments * track[2,'y']  + (1 - distSegments) * track[1,'y'] 
+    pointsOnTrack <- SpatialPoints(coordinates(data.frame(x=x3,y=y3)[-1,]))
+    
+    # find points on track overlapped with FOV
+    trackIntersect <- gIntersection(X[detectorID,], pointsOnTrack, byid = TRUE) # portion of track points intersecting with detection zone
+    possibleError <- tryCatch(timestamp <- (as.numeric(data.frame(do.call('rbind', strsplit(row.names(trackIntersect@coords),' ',fixed=TRUE)))[,2]) - 1) * timeInt,
+                              error = function(e) e)
+    if(inherits(possibleError, "error")) next
+    
+    # calculate distance to CT
+    distLocs <- trackIntersect@coords
+    ct_coord <- traps[["trapInfo"]][detectorID, c('x','y')]
+    dist <- as.vector(e2dist(ct_coord, distLocs)) # euclidean distance between CT and points on line
+    
+    # time at FOV entry = time of first overlapped point
+    entryTime <- timestamp[1]
+    
+    dist_to_CT[[i]] <- data.frame(ID = id, Site = detector, track = i, x = distLocs[,'x'], y = distLocs[,'y'], time = t, time_seconds =  t*timestep*60 + timestamp, dist = dist, entryTime = entryTime) # each list contains the distance to CT for every x sec interval
+  }
+  
+  dist_to_CT <- dist_to_CT[which(!sapply(dist_to_CT, is.null))]
+  # dist_to_CT2 <- lapply(dist_to_CT, function(d){
+  #   d$isDetected <- imperfectDet(d = d$dist,perfect_dist = perfect_dist, max_dist = max_dist, burst = T, bursts = 7)
+  #   return(d)
+  # } )
+  
+  # dupTimes <- unlist(lapply(dist_to_CT2, nrow))
+  # detdf_id <- rep(1:length(dist_to_CT2), dupTimes)
+  # detdf_new <- detdf[detdf_id,]
+  # detdf_new <- cbind(detdf_new[c('ID','Site')], do.call(rbind,dist_to_CT2))
+  detdf_new <- do.call(rbind,dist_to_CT)
+  row.names(detdf_new) <- 1:nrow(detdf_new)
+  
+  return(detdf_new)
+}
+
+# applies detection decay function with distance (requires detections to be treated as 'photos'/discrete points)
+# d: vector of distances to CT 
+# perfect_dist: dist to which detection is perfect
+imperfectDet <- function(d = d, perfect_dist = 3, max_dist = 10, burst = T, bursts = 2)
+{
+  detType <- isDetected <- vector()
+  k = 0
+  for (t in 1:length(d)){
+    k = k + 1 # 
+    
+    # simulated detection function (https://doi.org/10.1111/j.2041-210X.2011.00094.x)
+    # p <- (1-exp(-(3/d[k])^6))/(1+exp(10*(1-d[k])))
+    p <- 1-exp(-(3/d[k])^6)
+    
+    isDetected[k] <- rbinom(1, 1, p) # 1: detection, 0: no detection
+    
+    if (burst == T) {
+      if (isDetected[k] == 1){ # if detection
+        isDetected[k+1:bursts] <- 1 # next two intervals recorded as 'bursts'
+        k = k + bursts # skip the two bursts
+      }
+      if(k >= length(d)){ # in case k index exceeds length of d
+        break
+      }
+    }
+    
+  }
+  #return( data.frame(dist = as.vector(d), isDetected = isDetected[1:length(d)]) )
+  return( isDetected[1:length(d)] )
+}
+
 
 "DETECTION DATA PREP"
 # # for REST
@@ -390,6 +653,7 @@ dist2d <- function(a,b,c) {
 
 "PLOTTING"
 plotTraject <- function(df = df, plotit = X, torus=FALSE){
+  require(scales)
   k = 0
   n_foragers = length(unique(df$ID))
   if (torus==FALSE){
@@ -399,7 +663,7 @@ plotTraject <- function(df = df, plotit = X, torus=FALSE){
         lines(x=df$x[df$ID==i],
               y=df$y[df$ID==i],
               lwd = 1.5,
-              col = alpha(rainbow(n_foragers)[k],0.25))}
+              col = alpha(tol.rainbow(n_foragers)[k],0.25))}
     } 
   }
   if (torus==TRUE){
@@ -421,34 +685,17 @@ plotTraject <- function(df = df, plotit = X, torus=FALSE){
           lines(x=df$x[df$ID==i][start:end],
                 y=df$y[df$ID==i][start:end],
                 lwd = 1.5,
-                col = alpha(rainbow(n_foragers)[k],0.25))
+                col = alpha(tol.rainbow(n_foragers)[k],0.25))
         }
       } else{
         lines(x=df$x[df$ID==i],
               y=df$y[df$ID==i],
               lwd = 1.5,
-              col = alpha(rainbow(n_foragers)[k],0.25))
+              col = alpha(tol.rainbow(n_foragers)[k],0.25))
       }
       
-  }
-
-  }
-}
-
-plotTrajectTemp <- function(df = df, plotit = X){
-  require(viridis)
-  k = 0
-  n_foragers = length(unique(df$ID))
-  for(i in sort(unique(df$ID))){ # lines
-    k=k+1
-    if(plotit[k] == 1) { # or i
-      segments(x0 = head(df$x[df$ID==i],-1),
-               y0 = head(df$y[df$ID==i],-1),
-               x1 = tail(df$x[df$ID==i],-1),
-               y1 = tail(df$y[df$ID==i],-1),
-               lwd = 1,
-               col = alpha(viridis(length(df$x[df$ID==i])),0.5))
     }
-  } 
+    
+  }
 }
 

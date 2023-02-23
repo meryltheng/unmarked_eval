@@ -8,15 +8,12 @@ library(foreach)
 library(parallel)
 library(doParallel)
 library(nimble)
-#library(rgeos)
 library(mcmcOutput)
-#library(extremevalues)
-#source("0_functions.R") 
 
 '------ Run via shell script ------'
 # get the input passed from the shell script (arg[1] for scenario, arg[2] for iter, arg[3] for nTraps, arg[4] for movemt behav (sol/grp), if grp arg[5] is group size)
-# e.g., `Rscript --vanilla ./R/HPC/3b_analysisREST_HPC.R small 1 100 sol`
-# e.g., `Rscript --vanilla ./R/3d_analysisDS.R small 1 100 grp 25`
+# e.g., `Rscript --vanilla ./R/HPC/3b_REST_HPC.R hi 1 100 sol`
+# e.g., `Rscript --vanilla ./R/HPC/3b_REST_HPC.R hi 1 100 grp 25`
 args <- commandArgs(trailingOnly = TRUE)
 str(args)
 cat(args, sep = "\n")
@@ -46,7 +43,7 @@ if (length(args) <= 3) {
 subsetDat = TRUE
 days=50
 
-# read input data (detections, trap data)
+# read input data (detections)
 if (behav == 'sol'){
   x4 <- read.csv(file=paste('Data/Detections/ctDat_', scenario, '_sol_', iter, '_J', nTraps,'.csv', sep=''))
 }
@@ -54,31 +51,26 @@ if (behav == 'grp'){
   x4 <- read.csv(file=paste('Data/Detections/ctDat_', scenario, '_grp_', iter, '_gSize', groupSize,'_J', nTraps,'.csv', sep=''))
 }
 
-if (nTraps == 100){
-  load('Data/traps100.RData')
-}
-if (nTraps == 25){
-  load('Data/traps25.RData')
-}
-
 if(subsetDat == TRUE){
   x4 <- 
     x4 %>%
-    filter(time %in% 1:(12 * 12 * days)) 
+    filter(time %in% 1:(12 * 9 * days)) 
 }
 
 "-------- Prep model input --------"
-# 6 consolidate independent detections (det_id) and calc input params (for REST)
+perfect_dist = 2.2
+
+# consolidate independent detections and calc input params (for REST)
 x6 <- x4 %>%
-  filter( dist >= 0.135 & dist <= 0.235 ) %>% # perfect detection distance
+  filter( dist >= 0 & dist <= perfect_dist ) %>% # perfect detection distance
   # group_by(det_id) %>%
   group_by(track) %>% # because animal might enter and exit more than once within the same det_id
   summarise(ID = unique(ID), Site = unique(Site), time = unique(time),
-            stayTime =  length(time_seconds) # in seconds; stayTime =  last(time_seconds)-first(time_seconds)
+            stayTime = length(time_seconds) # in seconds; stayTime = last(time_seconds)-first(time_seconds)
   ) %>%
-  # group_by(det_id) %>%
   group_by(track) %>%
   filter(row_number()==1) %>% # remove repeats 
+  #filter(stayTime != 0) %>% # remove single 'image' captures that yield 0s stayTime
   as.data.frame()
 
 ## Data formatting
@@ -87,7 +79,7 @@ x6 <- x4 %>%
 ## day is a vector of days each camera was run
 
 # prepare misc variables
-A <- 1000*1000    # Study area in m2
+A <- 10000*10000    # Study area in m^2
 
 # prepare y and stay
 y1 <- aggregate(x6$Site, by = list(Site=x6$Site), FUN = length)
@@ -96,20 +88,18 @@ y3 <- merge(y1, y2, by = 'Site')
 y3 <- y1 %>% tidyr::complete(Site = 1:nTraps, fill = list(x=0) ) %>% as.data.frame()
 y <- as.vector(y3[,2]) # ENCOUNTER DATA
 
-stay <- x6$stayTime ; hist(stay, breaks = seq(0,ceiling(max(stay)/10)*10, 10))
+stay <- x6$stayTime ; hist(stay)
 
 # remove right outliers (determine censor time)
-#outies <- getOutliersI(stay,rho = c(1,1),FLim = c(0.1,0.9), distribution = 'exponential')
-#stayLim <- outies[["limit"]][["Right"]]
 stayLim <- max(stay) # THIS WILL AFFECT N_hat; round(quantile(stay, 0.95))
 
 ## Calculate area of camera FOV
-a <- pi * (0.235^2) / 6 - pi * (0.135^2) / 6# all traps same FOV
+a <- pi * (perfect_dist^2) / 9 # all traps same FOV
 
 ## Calculate survey effort in seconds
 day <- 50
-actv <- 1 # Activity proportion (we tried 0.2, 0.4, 0.6, 0.8, 1) 
-effort <- rep(60*60*12*day*actv,nTraps)    # Vector of effort (sec*min*hrs*day*activity proportion)
+actv <- 1 
+effort <- rep(60*60*9*day*actv,nTraps)    # Vector of effort (sec*min*hrs*day*activity proportion)
 
 Nstay<-sum(y)    # Total independent encounters
 cens <- rep(0,Nstay)    # Create vector to indicate if animal should be censored
@@ -131,11 +121,12 @@ code <- nimbleCode({
   for (i in 1:Ncam){
     #y[i] ~ dpois(mu[i]) # Poission distribution
     y[i] ~ dnegbin (p[i], r) # Negative binomial distribution
-    p[i] <- r / (r + mu[i])
+    p[i] <- r / (r + mu[i]) # Negative binomial distribution
     log(mu[i]) <- log(a) + log(effort[i]) + log(D) + log(lambda)
   }
   N <- D*A
 })
+
 
 ##################################################
 
@@ -158,7 +149,7 @@ registerDoParallel(cl) # register as backend for 'foreach'
   
 "-------- Execute REST --------"
 system.time(
-  res <- foreach(x = 1:cores, .packages="nimble",.errorhandling='remove', .inorder=FALSE) %do% {
+  res <- foreach(x = 1:cores, .packages="nimble",.errorhandling='remove', .inorder=FALSE) %dopar% {
     set.seed(x)
     out <- nimbleMCMC(code, data=data, constants=const,
                       inits=inits, monitors=parameters,
@@ -188,6 +179,12 @@ mclist <- coda::mcmc.list(res)
 ( mco <- mcmcOutput(mclist) )
 summMCMC <- summary(mco)
 
+# Calculate overdispersion factor (chat) 
+expected.y = unlist(summMCMC['N','mean'])/(10000*10000) * a * effort[1] * unlist(summMCMC['lambda','mean'])
+X2 <- sum((y - expected.y)^2 / expected.y)
+si <- mean((y - expected.y) / expected.y)
+chat <- X2/(nTraps-1) / (1 + si) # Fletcher 2012
+
 # Write output
 Replicate = iter
 Scenario = scenario
@@ -196,31 +193,40 @@ if (behav == 'sol'){ groupSize = NA }
 Model = "REST"
 Trap.effort = nTraps
 Days.monitored = days
-Nhat = unlist(summMCMC['N','mean'])
-Nhat.sd = unlist(summMCMC['N','sd'])
-Nhat.lo = unlist(summMCMC['N','l95'])
-Nhat.hi = unlist(summMCMC['N','u95'])
-Nhat.Rhat = unlist(summMCMC['N','Rhat'])
+y = Nstay
+y.sd = sd(as.vector(y3[,2]))
+Dhat = unlist(summMCMC['N','mean']) / 100 # convert N to D/km^2
+Dhat.sd = unlist(summMCMC['N','sd']) / 100
+Dhat.lo = unlist(summMCMC['N','l95']) / 100
+Dhat.hi = unlist(summMCMC['N','u95']) / 100
+Dhat.Rhat = unlist(summMCMC['N','Rhat'])
 lambda = unlist(summMCMC['lambda','mean'])
 lambda.Rhat = unlist(summMCMC['lambda','Rhat'])
 r = unlist(summMCMC['r','mean'])
 r.Rhat = unlist(summMCMC['r','Rhat'])
 stayLim = stayLim
+ESS.D = effectiveSize(res)[1]
+ESS.N = effectiveSize(res)[2]
+ESS.lambda = effectiveSize(res)[3]
+ESS.r = effectiveSize(res)[4]
+expected.y = expected.y
+chat = chat
 
-rest_output <- data.frame(Replicate, Scenario, Behaviour, groupSize, Model, Trap.effort, Days.monitored,
-                          Nhat, Nhat.sd, Nhat.lo, Nhat.hi, Nhat.Rhat, lambda, lambda.Rhat, r, r.Rhat, stayLim)
+rest_output <- data.frame(Replicate, Scenario, Behaviour, groupSize, Model, Trap.effort, Days.monitored, y,
+                          Dhat, Dhat.sd, Dhat.lo, Dhat.hi, Dhat.Rhat, lambda, lambda.Rhat, r, r.Rhat, stayLim,
+                          ESS.D, ESS.N, ESS.lambda, ESS.r, expected.y, chat)
 
 # append to existing master file
 write.table( rest_output,  
-             file="./Data/Estimates/rest_master_test.csv", 
+             file="./Data/Estimates/rest_imperfectDet.csv", 
              append = T, 
              sep=',', 
              row.names=F, 
              col.names=F )
 
 # # create empty .csv if not avail
-# columns= c("Replicate", "Scenario", "Behaviour", "groupSize", "Model", "Trap.effort", "Days.monitored",
-#            "Nhat", "Nhat.sd", "Nhat.lo", "Nhat.hi", "Nhat.Rhat", "lambda", "lambda.Rhat", "r", "r.Rhat", "stayLim")
+# columns= c("Replicate", "Scenario", "Behaviour", "groupSize", "Model", "Trap.effort", "Days.monitored", "y",
+#            "Dhat", "Dhat.sd", "Dhat.lo", "Dhat.hi", "Dhat.Rhat", "lambda", "lambda.Rhat", "r", "r.Rhat", "stayLim","ESS.D", "ESS.N", "ESS.lambda", "ESS.r", "expected.y", "chat")
 # mydf = data.frame(matrix(nrow = 0, ncol = length(columns)))
 # colnames(mydf) = columns
-# write.csv(mydf, file=paste('Data/Estimates/rest_master_test.csv',sep=''), row.names = F)
+# write.csv(mydf, file=paste('Data/Estimates/rest_imperfectDet.csv',sep=''), row.names = F)
